@@ -170,6 +170,24 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
 .scan h3{margin:0 0 6px;font-size:20px}
 .scan p{margin:0;color:var(--dim);font-variant-numeric:tabular-nums}
 
+.tools{display:flex;gap:8px;align-items:center;margin:2px 0 8px}
+.tools .chip{padding:8px 12px;font-size:13px}
+.tools .sp{flex:1}
+.tools .tog{width:38px;height:38px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;position:relative}
+.tools .tog .one{top:6px;right:6px}
+.extra{display:flex;justify-content:center;margin-top:18px}
+.lyr{position:fixed;inset:0;z-index:26;background:var(--bg);display:flex;flex-direction:column;padding:calc(10px + var(--safe-t)) 18px calc(16px + var(--safe-b));transform:translateY(100%);transition:transform .3s}
+.lyr.show{transform:none}
+.lyr-top{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.lyr-top .meta{flex:1;min-width:0}
+.lyr-body{flex:1;overflow:auto;padding:10px 4px 40vh}
+.lyr-body .plain{white-space:pre-wrap;font-size:20px;line-height:1.55;font-weight:500}
+.lyr-body .ln{font-size:24px;line-height:1.35;font-weight:700;color:#55556a;padding:8px 0;cursor:pointer;transition:color .2s}
+.lyr-body .ln.cur{color:var(--text)}
+.lyr-body .ln.past{color:#8a8aa0}
+.lyr-edit{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
+.lyr-edit textarea{flex:1;width:100%;border-radius:14px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit;font-size:16px;padding:14px;outline:none;resize:none}
+.lyr-edit textarea:focus{border-color:var(--accent)}
 .toast{position:fixed;left:50%;bottom:calc(110px + var(--safe-b));transform:translate(-50%,20px);background:#fff;color:#111;padding:10px 16px;border-radius:999px;font-size:14px;font-weight:500;opacity:0;transition:.25s;z-index:50;pointer-events:none;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 </style>
@@ -198,6 +216,12 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
       <div class="search">
         <span data-i="search"></span>
         <input id="q" type="search" placeholder="Buscar canción o artista" autocomplete="off">
+      </div>
+      <div class="tools">
+        <button class="chip" id="sortBtn"><span data-i="sort"></span><span id="sortLbl">Nombre</span></button>
+        <span class="sp"></span>
+        <button class="tog" id="shuf2" aria-label="Aleatorio"><span data-i="shuffle"></span></button>
+        <button class="tog" id="rep2" aria-label="Repetir"><span data-i="repeat"></span><span class="one">1</span></button>
       </div>
       <div class="note" id="note"></div>
       <ul class="list" id="songList"></ul>
@@ -263,6 +287,21 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
       <button class="btn-round" id="next" aria-label="Siguiente"><span data-i="next"></span></button>
       <button class="btn-round tog" id="rep" aria-label="Repetir"><span data-i="repeat"></span><span class="one">1</span></button>
     </div>
+    <div class="extra"><button class="chip" id="lyrBtn"><span data-i="lyrics"></span>Letra</button></div>
+  </div>
+</div>
+
+<div class="lyr" id="lyr">
+  <div class="lyr-top">
+    <button class="btn-round" id="lyrClose" aria-label="Cerrar"><span data-i="down"></span></button>
+    <div class="meta"><div class="t" id="lyrT"></div><div class="a" id="lyrA"></div></div>
+    <button class="chip" id="lyrEditBtn"><span data-i="edit"></span>Editar</button>
+  </div>
+  <div class="lyr-body" id="lyrBody"></div>
+  <div class="lyr-edit hidden" id="lyrEdit">
+    <textarea id="lyrText" placeholder="Pega o escribe la letra aquí…"></textarea>
+    <div class="note">Tip: si cada línea empieza con su tiempo, como [01:23.45], la letra avanzará sola con la canción y podrás tocar una línea para saltar ahí.</div>
+    <div class="dlgbtns"><button id="lyrCancel">Cancelar</button><button class="ok" id="lyrSave">Guardar</button></div>
   </div>
 </div>
 
@@ -319,6 +358,8 @@ const IC = {
   down:`<svg viewBox="0 0 24 24" ${P} stroke-width="2.4"><path d="m6 9 6 6 6-6"/></svg>`,
   back:`<svg viewBox="0 0 24 24" ${P} stroke-width="2.4"><path d="m15 6-6 6 6 6"/></svg>`,
   check:`<svg viewBox="0 0 24 24" ${P} stroke-width="3.2"><path d="m5 12 5 5 9-10"/></svg>`,
+  sort:`<svg viewBox="0 0 24 24" ${P}><path d="M7 4v16M3 16l4 4 4-4M14 6h7M14 12h5M14 18h3"/></svg>`,
+  lyrics:`<svg viewBox="0 0 24 24" ${P}><path d="M4 5h16M4 10h16M4 15h9"/><path d="M17 14v6" /><circle cx="15.5" cy="20" r="1.5"/></svg>`,
   disk:`<svg viewBox="0 0 24 24" ${P}><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>`
 };
 document.querySelectorAll('[data-i]').forEach(el => { el.outerHTML = IC[el.dataset.i]; });
@@ -326,11 +367,13 @@ document.querySelectorAll('[data-i]').forEach(el => { el.outerHTML = IC[el.datas
 /* ---------- estado ---------- */
 let songs = [], playlists = [];
 let queue = [], ctxIds = [], cur = -1;
-let shuffle = false, repeat = 0;
+let shuffle = false, repeat = 0, sortMode = 'name';
 let view = 'songs', openPl = null, visibleIds = [];
 let curUrl = null, dragging = false;
 const audio = new Audio();
-audio.preload = 'metadata';
+audio.preload = 'auto';
+audio.setAttribute('playsinline', '');
+document.body.appendChild(audio);
 const coverUrls = new Map();
 
 /* ---------- base de datos local ---------- */
@@ -360,7 +403,7 @@ function idb(store, mode, fn){
     }catch(e){ res(false); }
   });
 }
-const songRecord = s => ({id:s.id, name:s.name, size:s.size, path:s.path, title:s.title, artist:s.artist, album:s.album, file:s.file, cover:s.cover, added:s.added, flacOk:!!s.flacOk});
+const songRecord = s => ({id:s.id, name:s.name, size:s.size, path:s.path, title:s.title, artist:s.artist, album:s.album, file:s.file, cover:s.cover, added:s.added, flacOk:!!s.flacOk, lyrics:s.lyrics || '', lyrChecked:!!s.lyrChecked});
 const saveSong = s => idb('songs', 'readwrite', st => st.put(songRecord(s)));
 const delSong = id => idb('songs', 'readwrite', st => st.delete(id));
 const savePl = p => idb('playlists', 'readwrite', st => st.put({id:p.id, name:p.name, songIds:[...p.songIds], created:p.created}));
@@ -406,6 +449,7 @@ async function readFlac(file, start){
           if(k === 'TITLE' && !out.title) out.title = v;
           else if((k === 'ARTIST' || k === 'ALBUMARTIST') && !out.artist) out.artist = v;
           else if(k === 'ALBUM' && !out.album) out.album = v;
+          else if((k === 'LYRICS' || k === 'UNSYNCEDLYRICS') && !out.lyrics) out.lyrics = v;
         }
       } else {
         let q = 4; const ml = dv.getUint32(q); q += 4;
@@ -448,6 +492,12 @@ async function readTags(file){
       if(id === 'TIT2') out.title = frameText(d);
       else if(id === 'TPE1') out.artist = frameText(d);
       else if(id === 'TALB') out.album = frameText(d);
+      else if(id === 'USLT' && !out.lyrics){
+        const enc = d[0]; let i = 4;
+        if(enc === 1 || enc === 2){ while(i+1 < d.length && !(d[i]===0 && d[i+1]===0)) i += 2; i += 2; }
+        else { while(i < d.length && d[i] !== 0) i++; i++; }
+        out.lyrics = dec(enc, d.subarray(i)).replace(/\u0000+$/, '').trim();
+      }
       else if(id === 'APIC' && !out.cover){
         const enc = d[0]; let i = 1;
         while(i < d.length && d[i] !== 0) i++;
@@ -499,7 +549,13 @@ function plCoverHTML(p){
 }
 let toastT;
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400); }
-const sorted = () => [...songs].sort((a,b) => a.title.localeCompare(b.title, 'es', {sensitivity:'base'}));
+const SORTS = {
+  name:   {label:'Nombre (A-Z)', short:'Nombre', fn:(a,b) => a.title.localeCompare(b.title, 'es', {sensitivity:'base'})},
+  artist: {label:'Artista (A-Z)', short:'Artista', fn:(a,b) => a.artist.localeCompare(b.artist, 'es', {sensitivity:'base'}) || a.title.localeCompare(b.title, 'es', {sensitivity:'base'})},
+  new:    {label:'Añadidas recientemente', short:'Recientes', fn:(a,b) => (b.added||0) - (a.added||0)},
+  old:    {label:'Añadidas primero', short:'Antiguas', fn:(a,b) => (a.added||0) - (b.added||0)}
+};
+const sorted = () => [...songs].sort((SORTS[sortMode] || SORTS.name).fn);
 const matches = (s, q) => !q || (s.title + ' ' + s.artist + ' ' + s.album).toLowerCase().includes(q);
 function fmtBytes(b){ if(b > 1e9) return (b/1e9).toFixed(1) + ' GB'; return Math.max(1, Math.round(b/1e6)) + ' MB'; }
 
@@ -517,6 +573,7 @@ function hideLayer(name){
   else if(name === 'sheet'){ $('#sheet').classList.remove('show'); if(!layers.includes('sheet')) $('#veil').classList.remove('show'); }
   else if(name === 'dlg') $('#dlg').classList.remove('show');
   else if(name === 'picker') $('#picker').classList.remove('show');
+  else if(name === 'lyr'){ $('#lyr').classList.remove('show'); lyrId = null; }
   else if(name === 'pl'){ openPl = null; view = 'lists'; render(); }
 }
 function closeTop(){
@@ -696,6 +753,7 @@ function render(){
   else renderPl();
 }
 function renderSongs(){
+  $('#sortLbl').textContent = (SORTS[sortMode] || SORTS.name).short;
   const q = $('#q').value.trim().toLowerCase();
   const items = sorted().filter(s => matches(s, q));
   visibleIds = items.map(s => s.id);
@@ -824,7 +882,8 @@ function songSheet(id){
   const inPlView = view === 'pl' && plById(openPl);
   const opts = [
     {icon:'queue', label:'Reproducir a continuación', run: () => playNext(id)},
-    {icon:'addlist', label:'Añadir a una lista', run: () => addToPlaylistSheet(id)}
+    {icon:'addlist', label:'Añadir a una lista', run: () => addToPlaylistSheet(id)},
+    {icon:'lyrics', label:'Ver o añadir letra', run: () => openLyrics(id)}
   ];
   if(inPlView) opts.push({icon:'minus', label:'Quitar de esta lista', run: async () => {
     const p = plById(openPl); p.songIds = p.songIds.filter(x => x !== id); await savePl(p); render(); toast('Quitada de la lista');
@@ -892,7 +951,7 @@ function load(i, autoplay = true){
 }
 function togglePlay(){
   if(cur < 0){ if(songs.length) playFrom(sorted().map(s => s.id), null); return; }
-  if(audio.paused) audio.play().catch(() => {}); else audio.pause();
+  if(audio.paused) resume(); else audio.pause();
 }
 function next(auto = false){
   if(!queue.length) return;
@@ -911,7 +970,7 @@ audio.addEventListener('ended', () => {
 });
 audio.addEventListener('error', () => { if(cur >= 0 && audio.getAttribute('src')) toast('Este archivo no se puede reproducir'); });
 ['play','pause'].forEach(ev => audio.addEventListener(ev, () => {
-  setPPIcons(); render();
+  setPPIcons(); if(!document.hidden) render();
   if('mediaSession' in navigator) navigator.mediaSession.playbackState = audio.paused ? 'paused' : 'playing';
 }));
 audio.addEventListener('loadedmetadata', () => { $('#tDur').textContent = fmt(audio.duration); });
@@ -945,12 +1004,104 @@ function updateNow(){
 }
 if('mediaSession' in navigator){
   const set = (a,f) => { try{ navigator.mediaSession.setActionHandler(a,f); }catch(e){} };
-  set('play', () => audio.play().catch(() => {}));
+  set('play', resume);
   set('pause', () => audio.pause());
   set('previoustrack', prev);
   set('nexttrack', () => next());
   set('seekto', d => { if(d.seekTime != null) audio.currentTime = d.seekTime; });
 }
+
+// Reanudar: si Android "durmió" el audio, se recarga la canción en el mismo punto
+async function resume(){
+  try{ await audio.play(); return; }catch(e){}
+  const s = byId(queue[cur]); if(!s) return;
+  const t = audio.currentTime || 0;
+  if(curUrl) URL.revokeObjectURL(curUrl);
+  curUrl = URL.createObjectURL(playableBlob(s));
+  audio.src = curUrl;
+  audio.addEventListener('loadedmetadata', () => { try{ audio.currentTime = t; }catch(e){} }, {once:true});
+  try{ await audio.play(); }catch(e){ toast('Toca ▶ para reproducir'); }
+  updateNow();
+}
+document.addEventListener('visibilitychange', () => { if(!document.hidden){ render(); setPPIcons(); } });
+
+/* ---------- orden ---------- */
+$('#sortBtn').addEventListener('click', () => sheet({title:'Ordenar canciones', options: Object.entries(SORTS).map(([k,v]) => ({
+  icon: k === sortMode ? 'check' : 'sort', label: v.label, run: () => { sortMode = k; savePrefs(); render(); }
+}))}));
+
+/* ---------- letras ---------- */
+let lyrId = null, lyrLines = null, lyrIdx = -1;
+function parseLrc(txt){
+  const out = [];
+  for(const line of txt.split(/\r?\n/)){
+    const tags = [...line.matchAll(/\[(\d{1,2}):(\d{1,2}(?:[.:]\d{1,3})?)\]/g)];
+    if(!tags.length) continue;
+    const text = line.replace(/\[[^\]]*\]/g, '').trim();
+    for(const m of tags) out.push({t: +m[1] * 60 + parseFloat(m[2].replace(':', '.')), text});
+  }
+  out.sort((a,b) => a.t - b.t);
+  return out.length >= 3 ? out : null;
+}
+function renderLyrics(){
+  const s = byId(lyrId); if(!s) return;
+  $('#lyrT').textContent = s.title; $('#lyrA').textContent = s.artist;
+  $('#lyrEdit').classList.add('hidden'); $('#lyrBody').classList.remove('hidden'); $('#lyrEditBtn').classList.remove('hidden');
+  lyrIdx = -1; lyrLines = null;
+  if(!s.lyrics){
+    $('#lyrEditBtn').classList.add('hidden');
+    $('#lyrBody').innerHTML = `<div class="empty-sm">Esta canción todavía no tiene letra.<br><br><button class="chip primary" id="lyrAdd">${IC.plus}Añadir letra</button></div>`;
+    $('#lyrAdd').onclick = editLyrics;
+    return;
+  }
+  lyrLines = parseLrc(s.lyrics);
+  $('#lyrBody').innerHTML = lyrLines
+    ? lyrLines.map((l,i) => `<div class="ln" data-ln="${i}">${esc(l.text || '♪')}</div>`).join('')
+    : `<div class="plain">${esc(s.lyrics)}</div>`;
+  syncLyrics(); $('#lyrBody').scrollTop = 0;
+}
+function syncLyrics(){
+  if(!lyrLines || lyrId !== queue[cur]) return;
+  const t = audio.currentTime; let i = -1;
+  for(let k = 0; k < lyrLines.length; k++){ if(lyrLines[k].t <= t + 0.2) i = k; else break; }
+  if(i === lyrIdx) return;
+  lyrIdx = i;
+  document.querySelectorAll('#lyrBody .ln').forEach((el,k) => { el.classList.toggle('cur', k === i); el.classList.toggle('past', k < i); });
+  const el = document.querySelector(`#lyrBody [data-ln="${i}"]`);
+  if(el) el.scrollIntoView({block:'center', behavior:'smooth'});
+}
+audio.addEventListener('timeupdate', () => { if(lyrId) syncLyrics(); });
+$('#lyrBody').addEventListener('click', e => {
+  const l = e.target.closest('[data-ln]'); if(!l || !lyrLines || lyrId !== queue[cur]) return;
+  audio.currentTime = lyrLines[+l.dataset.ln].t;
+});
+async function openLyrics(id){
+  const s = byId(id); if(!s) return;
+  lyrId = id; $('#lyr').classList.add('show'); openLayer('lyr');
+  if(!s.lyrics && !s.lyrChecked){
+    $('#lyrBody').innerHTML = '<div class="empty-sm">Buscando letra en el archivo…</div>';
+    const t = await readTags(s.file);
+    s.lyrChecked = true;
+    if(t.lyrics) s.lyrics = t.lyrics;
+    await saveSong(s);
+  }
+  renderLyrics();
+}
+function editLyrics(){
+  const s = byId(lyrId); if(!s) return;
+  $('#lyrText').value = s.lyrics || '';
+  $('#lyrBody').classList.add('hidden'); $('#lyrEditBtn').classList.add('hidden'); $('#lyrEdit').classList.remove('hidden');
+  setTimeout(() => $('#lyrText').focus(), 60);
+}
+$('#lyrEditBtn').addEventListener('click', editLyrics);
+$('#lyrCancel').addEventListener('click', renderLyrics);
+$('#lyrSave').addEventListener('click', async () => {
+  const s = byId(lyrId); if(!s) return;
+  s.lyrics = $('#lyrText').value.trim(); s.lyrChecked = true;
+  await saveSong(s); renderLyrics(); toast(s.lyrics ? 'Letra guardada' : 'Letra borrada');
+});
+$('#lyrClose').addEventListener('click', () => { if(layers[layers.length-1] === 'lyr') closeTop(); });
+$('#lyrBtn').addEventListener('click', () => { if(queue[cur]) openLyrics(queue[cur]); });
 
 /* ---------- controles ---------- */
 $('#miniPP').addEventListener('click', e => { e.stopPropagation(); togglePlay(); });
@@ -961,8 +1112,8 @@ $('#fullPP').addEventListener('click', togglePlay);
 $('#next').addEventListener('click', () => next());
 $('#prev').addEventListener('click', prev);
 $('#fullMore').addEventListener('click', () => { if(queue[cur]) songSheet(queue[cur]); });
-function paintShuffle(){ $('#shuf').classList.toggle('on', shuffle); }
-$('#shuf').addEventListener('click', () => {
+function paintShuffle(){ ['#shuf','#shuf2'].forEach(q => $(q).classList.toggle('on', shuffle)); }
+function toggleShuffle(){
   shuffle = !shuffle; paintShuffle();
   if(cur >= 0){
     const id = queue[cur];
@@ -971,19 +1122,23 @@ $('#shuf').addEventListener('click', () => {
     cur = Math.max(0, queue.indexOf(id));
   }
   toast(shuffle ? 'Aleatorio activado' : 'Aleatorio desactivado'); savePrefs();
-});
-$('#rep').addEventListener('click', () => {
+}
+$('#shuf').addEventListener('click', toggleShuffle);
+$('#shuf2').addEventListener('click', toggleShuffle);
+function toggleRepeat(){
   repeat = (repeat + 1) % 3; paintRepeat();
   toast(['Repetir desactivado','Repetir todo','Repetir esta canción'][repeat]); savePrefs();
-});
-function paintRepeat(){ const r = $('#rep'); r.classList.toggle('on', repeat > 0); r.classList.toggle('one', repeat === 2); }
+}
+$('#rep').addEventListener('click', toggleRepeat);
+$('#rep2').addEventListener('click', toggleRepeat);
+function paintRepeat(){ ['#rep','#rep2'].forEach(q => { const r = $(q); r.classList.toggle('on', repeat > 0); r.classList.toggle('one', repeat === 2); }); }
 let y0 = null;
 $('#full').addEventListener('touchstart', e => { if(e.target.closest('input')) return; y0 = e.touches[0].clientY; }, {passive:true});
 $('#full').addEventListener('touchend', e => { if(y0 != null && e.changedTouches[0].clientY - y0 > 90 && layers[layers.length-1] === 'full') closeTop(); y0 = null; });
 
 /* ---------- preferencias ---------- */
-function savePrefs(){ try{ localStorage.setItem('mm-prefs', JSON.stringify({shuffle, repeat})); }catch(e){} }
-function loadPrefs(){ try{ const p = JSON.parse(localStorage.getItem('mm-prefs') || '{}'); shuffle = !!p.shuffle; repeat = p.repeat|0; }catch(e){} paintShuffle(); paintRepeat(); }
+function savePrefs(){ try{ localStorage.setItem('mm-prefs', JSON.stringify({shuffle, repeat, sortMode})); }catch(e){} }
+function loadPrefs(){ try{ const p = JSON.parse(localStorage.getItem('mm-prefs') || '{}'); shuffle = !!p.shuffle; repeat = p.repeat|0; if(SORTS[p.sortMode]) sortMode = p.sortMode; }catch(e){} paintShuffle(); paintRepeat(); }
 
 /* ---------- app instalable ---------- */
 if('serviceWorker' in navigator){ window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {})); }
