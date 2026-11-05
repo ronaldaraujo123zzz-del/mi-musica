@@ -232,7 +232,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
   </div>
 </div>
 
-<input type="file" id="pickFiles" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.opus,.flac" multiple hidden>
+<input type="file" id="pickFiles" accept="audio/*,audio/flac,audio/x-flac,.mp3,.m4a,.aac,.wav,.ogg,.opus,.flac" multiple hidden>
 <input type="file" id="pickFolder" webkitdirectory multiple hidden>
 
 <div class="mini" id="mini">
@@ -360,7 +360,7 @@ function idb(store, mode, fn){
     }catch(e){ res(false); }
   });
 }
-const songRecord = s => ({id:s.id, name:s.name, size:s.size, path:s.path, title:s.title, artist:s.artist, album:s.album, file:s.file, cover:s.cover, added:s.added});
+const songRecord = s => ({id:s.id, name:s.name, size:s.size, path:s.path, title:s.title, artist:s.artist, album:s.album, file:s.file, cover:s.cover, added:s.added, flacOk:!!s.flacOk});
 const saveSong = s => idb('songs', 'readwrite', st => st.put(songRecord(s)));
 const delSong = id => idb('songs', 'readwrite', st => st.delete(id));
 const savePl = p => idb('playlists', 'readwrite', st => st.put({id:p.id, name:p.name, songIds:[...p.songIds], created:p.created}));
@@ -382,11 +382,57 @@ function dec(enc, bytes){
   }catch(e){ return ''; }
 }
 const frameText = d => dec(d[0], d.subarray(1)).split('\u0000')[0].trim();
-async function readTags(file){
+// Etiquetas de FLAC (Vorbis comments + portada PICTURE)
+async function readFlac(file, start){
   const out = {};
+  let p = start + 4;
+  for(let n = 0; n < 128; n++){
+    const h = new Uint8Array(await file.slice(p, p + 4).arrayBuffer());
+    if(h.length < 4) break;
+    const last = h[0] & 0x80, type = h[0] & 0x7f, len = (h[1] << 16) | (h[2] << 8) | h[3];
+    if(type === 4 || (type === 6 && !out.cover)){
+      const b = new Uint8Array(await file.slice(p + 4, p + 4 + len).arrayBuffer());
+      const dv = new DataView(b.buffer);
+      if(type === 4){
+        let q = 0; const vlen = dv.getUint32(q, true); q += 4 + vlen;
+        const cnt = dv.getUint32(q, true); q += 4;
+        const td = new TextDecoder('utf-8');
+        for(let i = 0; i < cnt && q + 4 <= b.length; i++){
+          const l = dv.getUint32(q, true); q += 4;
+          const s = td.decode(b.subarray(q, q + l)); q += l;
+          const eq = s.indexOf('='); if(eq < 0) continue;
+          const k = s.slice(0, eq).toUpperCase(), v = s.slice(eq + 1).trim();
+          if(!v) continue;
+          if(k === 'TITLE' && !out.title) out.title = v;
+          else if((k === 'ARTIST' || k === 'ALBUMARTIST') && !out.artist) out.artist = v;
+          else if(k === 'ALBUM' && !out.album) out.album = v;
+        }
+      } else {
+        let q = 4; const ml = dv.getUint32(q); q += 4;
+        const mime = new TextDecoder().decode(b.subarray(q, q + ml)); q += ml;
+        const dl = dv.getUint32(q); q += 4 + dl + 16;
+        const pl = dv.getUint32(q); q += 4;
+        if(pl > 0 && q + pl <= b.length) out.cover = new Blob([b.slice(q, q + pl)], {type: mime || 'image/jpeg'});
+      }
+    }
+    p += 4 + len;
+    if(last) break;
+  }
+  return out;
+}
+async function readTags(file){
+  let out = {};
   try{
     const h = new Uint8Array(await file.slice(0,10).arrayBuffer());
+    const isFlacAt = async pos => { const m = new Uint8Array(await file.slice(pos, pos + 4).arrayBuffer()); return m[0]===0x66 && m[1]===0x4C && m[2]===0x61 && m[3]===0x43; };
+    if(await isFlacAt(0)) return await readFlac(file, 0);
     if(h[0]!==73 || h[1]!==68 || h[2]!==51) return out;
+    // FLAC con una etiqueta ID3 delante
+    const tagEnd = 10 + synch(h,6) + (h[5] & 0x10 ? 10 : 0);
+    if(await isFlacAt(tagEnd)){
+      const f = await readFlac(file, tagEnd);
+      if(f.title || f.cover) return f;
+    }
     const ver = h[3]; if(ver < 3 || ver > 4) return out;
     const size = synch(h,6);
     const b = new Uint8Array(await file.slice(10, 10 + size).arrayBuffer());
@@ -569,7 +615,7 @@ async function addFiles(list, fromFolder){
       id: uid(), name: f.name, size: f.size, path: f.webkitRelativePath || '',
       title: tags.title || fb.title || f.name,
       artist: tags.artist || fb.artist || 'Artista desconocido',
-      album: tags.album || '', file: f, cover: tags.cover || null, added: Date.now()
+      album: tags.album || '', file: f, cover: tags.cover || null, added: Date.now(), flacOk: true
     };
     if(db && !(await saveSong(s))) failed = true;
     songs.push(s); added++;
@@ -827,11 +873,19 @@ function playFrom(ids, id, forceShuffle){
     queue = [...ids]; load(id ? Math.max(0, ids.indexOf(id)) : 0);
   }
 }
+const MIME = {flac:'audio/flac', mp3:'audio/mpeg', m4a:'audio/mp4', aac:'audio/aac', ogg:'audio/ogg', oga:'audio/ogg', opus:'audio/ogg', wav:'audio/wav', webm:'audio/webm', amr:'audio/amr'};
+function playableBlob(s){
+  const ext = ((s.name || '').split('.').pop() || '').toLowerCase();
+  const want = MIME[ext];
+  // algunos teléfonos entregan el archivo sin tipo o con uno raro (p. ej. audio/x-flac)
+  if(want && s.file.type !== want && (!s.file.type || ext === 'flac')) return new Blob([s.file], {type: want});
+  return s.file;
+}
 function load(i, autoplay = true){
   const s = byId(queue[i]); if(!s) return;
   cur = i;
   if(curUrl) URL.revokeObjectURL(curUrl);
-  curUrl = URL.createObjectURL(s.file);
+  curUrl = URL.createObjectURL(playableBlob(s));
   audio.src = curUrl;
   if(autoplay) audio.play().catch(() => toast('Toca ▶ para reproducir'));
   updateNow(); render();
@@ -943,6 +997,23 @@ $('#installBtn').addEventListener('click', async () => {
 });
 window.addEventListener('appinstalled', () => { $('#installBtn').classList.add('hidden'); toast('¡App instalada!'); });
 
+// Vuelve a leer los FLAC que se añadieron con la versión anterior (sin nombre ni portada)
+async function fixFlacTags(){
+  let changed = 0;
+  for(const s of songs){
+    if(!/\.flac$/i.test(s.name || '') || s.flacOk) continue;
+    const t = await readTags(s.file);
+    if(t.title) s.title = t.title;
+    if(t.artist) s.artist = t.artist;
+    if(t.album) s.album = t.album;
+    if(t.cover && !s.cover) s.cover = t.cover;
+    s.flacOk = true;
+    if(t.title || t.artist || t.cover) changed++;
+    await saveSong(s);
+  }
+  if(changed){ render(); updateNow(); toast(`Actualicé ${plural(changed,'canción FLAC','canciones FLAC')}`); }
+}
+
 /* ---------- inicio ---------- */
 (async function init(){
   loadPrefs(); setPPIcons();
@@ -952,6 +1023,7 @@ window.addEventListener('appinstalled', () => { $('#installBtn').classList.add('
     playlists = ((await idb('playlists', 'readonly', st => st.getAll())) || []).filter(p => p && Array.isArray(p.songIds));
     try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
     $('#note').textContent = 'Tus canciones y listas quedan guardadas en la app.';
+    setTimeout(fixFlacTags, 500);
   } else {
     $('#note').textContent = 'Este navegador no deja guardar: tendrás que añadir las canciones cada vez.';
   }
