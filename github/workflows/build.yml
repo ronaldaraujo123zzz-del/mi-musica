@@ -1,0 +1,44 @@
+name: Crear APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['android.zip', '.github/workflows/build.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descomprimir el proyecto
+        run: unzip -o android.zip -d src
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Crear APK
+        working-directory: src/android
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Preparar archivo
+        run: cp src/android/app/build/outputs/apk/release/app-release.apk MiMusica.apk
+
+      - name: Publicar descarga
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Mi Música ${{ github.run_number }}
+          body: Descarga MiMusica.apk e instálala en tu teléfono.
+          files: MiMusica.apk
+          make_latest: true
