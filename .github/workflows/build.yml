@@ -104,33 +104,49 @@ jobs:
             exit 1
           fi
           "$BT/zipalign" -p -f 4 "$SIN" alineado.apk
+
+          # Hay que entregar las DOS llaves, en orden: primero la vieja, luego
+          # la nueva. apksigner firma los esquemas antiguos (v1 y v2) con la
+          # vieja, que es la que conocen los teléfonos con la versión 15, y el
+          # v3 con ambas, marcando la nueva como la vigente de Android 9 en
+          # adelante. Con una sola llave aborta: "the oldest signer in the
+          # SigningCertificateLineage is missing".
           "$BT/apksigner" sign \
-            --ks near-music.jks --ks-pass env:PASS --key-pass env:PASS --ks-key-alias "$ALIAS_NUEVO" \
+            --ks "$LLAVE_VIEJA" --ks-pass "pass:$PASS_VIEJA" --ks-key-alias "$ALIAS_VIEJO" \
+            --next-signer --ks near-music.jks --ks-pass env:PASS --key-pass env:PASS --ks-key-alias "$ALIAS_NUEVO" \
             --lineage lineage.bin \
             --min-sdk-version 26 \
             --out MiMusica.apk alineado.apk
 
       - name: Comprobar la firma y la rotación
         run: |
-          echo "--- firma del APK ---"
-          "$BT/apksigner" verify --min-sdk-version 26 --print-certs -v MiMusica.apk | tee verify.txt
-
-          # Las huellas pueden venir con o sin dos puntos y en cualquier caja.
-          TODO=$(cat verify.txt; "$BT/apksigner" lineage --in lineage.bin --print-certs -v)
-          PLANO=$(printf '%s' "$TODO" | tr -d ': \n' | tr '[:upper:]' '[:lower:]')
-
           fallo() { echo "FALLO: $1"; exit 1; }
+          plano() { tr -d ': \n' | tr '[:upper:]' '[:lower:]'; }
 
-          grep -q "Verified using v3 scheme.*true" verify.txt \
+          # Android 8 (SDK 26-27) solo entiende v1 y v2, y ahí tiene que ver la
+          # llave VIEJA, que es la que conoce de la versión que ya tiene.
+          echo "--- como lo ve Android 8 ---"
+          "$BT/apksigner" verify --min-sdk-version 26 --max-sdk-version 27 --print-certs -v MiMusica.apk | tee viejo.txt
+          case "$(plano < viejo.txt)" in *"$HUELLA_VIEJA"*) ;; *)
+            fallo "en Android 8 el APK no aparece firmado con la llave vieja; esos teléfonos rechazarían la actualización.";; esac
+
+          # De Android 9 en adelante manda el v3, y ahí la vigente es la NUEVA.
+          echo "--- como lo ve Android 9 en adelante ---"
+          "$BT/apksigner" verify --min-sdk-version 28 --print-certs -v MiMusica.apk | tee nuevo.txt
+          grep -q "Verified using v3 scheme.*true" nuevo.txt \
             || fallo "el APK no lleva firma v3, así que no hay rotación."
+          case "$(plano < nuevo.txt)" in *"$HUELLA_NUEVA"*) ;; *)
+            fallo "de Android 9 en adelante el APK no queda firmado con la llave nueva.";; esac
 
-          case "$PLANO" in *"$HUELLA_NUEVA"*) ;; *)
-            fallo "la llave nueva no aparece en la firma del APK.";; esac
+          # Y la cadena tiene que unir las dos.
+          echo "--- certificado de rotación ---"
+          LIN=$("$BT/apksigner" lineage --in lineage.bin --print-certs -v | tee lineage.txt | plano)
+          case "$LIN" in *"$HUELLA_VIEJA"*) ;; *)
+            fallo "la llave vieja no está en el certificado de rotación.";; esac
+          case "$LIN" in *"$HUELLA_NUEVA"*) ;; *)
+            fallo "la llave nueva no está en el certificado de rotación.";; esac
 
-          case "$PLANO" in *"$HUELLA_VIEJA"*) ;; *)
-            fallo "la llave vieja no aparece en el certificado de rotación; los teléfonos con la versión 15 rechazarían la actualización.";; esac
-
-          echo "Firmado con la llave nueva, con la vieja autorizándola."
+          echo "Android 8 lo verifica con la llave vieja; Android 9+ con la nueva."
           echo "La actualización se instalará encima sin desinstalar."
 
       - name: Borrar la llave del disco
