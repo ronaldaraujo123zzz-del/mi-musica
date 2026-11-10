@@ -3,11 +3,25 @@ name: Crear APK
 on:
   push:
     branches: [main]
-    paths: ['android.zip', 'near-music.jks.enc', '.github/workflows/build.yml']
+    paths:
+      - 'android.zip'
+      - 'near-music.jks.enc'
+      - 'migracion/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
+
+env:
+  # Huellas esperadas. Si alguna no cuadra, la compilación se detiene.
+  HUELLA_NUEVA: f1ffa08e08a62cd97c8b30ccf96b693652473fe688e6a0420fbad65d634ff91f
+  HUELLA_VIEJA: 86d3bafb32c33dc49adea294344ce653835d5ea10aa70787d836d0a9139d4273
+  # La llave vieja y su contraseña son públicas desde siempre; ver migracion/LEEME.md
+  LLAVE_VIEJA: migracion/llave-vieja-QUEMADA.jks
+  PASS_VIEJA: mimusica123
+  ALIAS_VIEJO: mimusica
+  ALIAS_NUEVO: nearmusic
 
 jobs:
   build:
@@ -23,68 +37,114 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # near-music.jks.enc es la llave cifrada. Sin la contraseña del secret
-      # NEAR_KEYSTORE_PASS ese archivo no sirve para nada.
-      - name: Preparar la llave de firma
-        env:
-          LLAVE_PASS: ${{ secrets.NEAR_KEYSTORE_PASS }}
+      - name: Localizar apksigner y zipalign
         run: |
-          if [ -z "$LLAVE_PASS" ]; then
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          BT=$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -1)
+          if [ -z "$BT" ] || [ ! -x "$BT/apksigner" ]; then
+            echo "No hay build-tools en el runner; instalando."
+            yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" > /dev/null
+            BT="$SDK/build-tools/35.0.0"
+          fi
+          echo "Usando $BT"
+          echo "BT=$BT" >> "$GITHUB_ENV"
+
+      # near-music.jks.enc es la llave nueva, cifrada. Sin la contraseña del
+      # secret NEAR_KEYSTORE_PASS ese archivo no sirve para nada.
+      - name: Descifrar la llave nueva
+        env:
+          PASS: ${{ secrets.NEAR_KEYSTORE_PASS }}
+        run: |
+          if [ -z "$PASS" ]; then
             echo "Falta el secret NEAR_KEYSTORE_PASS."
             echo "Créalo en Settings > Secrets and variables > Actions."
             exit 1
           fi
-
-          # Se quitan espacios y saltos que el navegador pueda haber metido al pegar.
-          PASS=$(printf '%s' "$LLAVE_PASS" | tr -d '[:space:]')
-
           if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -a \
-                -in near-music.jks.enc -out src/android/app/near-music.jks \
-                -pass pass:"$PASS" 2>/dev/null; then
+                -in near-music.jks.enc -out near-music.jks -pass env:PASS 2>/dev/null; then
             echo "No se pudo descifrar la llave: la contraseña de NEAR_KEYSTORE_PASS no es la correcta."
             echo "Pégala de nuevo, tal cual, sin espacios delante ni detrás."
             exit 1
           fi
-
-          if ! keytool -list -keystore src/android/app/near-music.jks \
-                -storepass "$PASS" -alias nearmusic > /dev/null 2>&1; then
+          if ! keytool -list -keystore near-music.jks -storepass "$PASS" -alias "$ALIAS_NUEVO" > /dev/null 2>&1; then
             echo "La llave se descifró pero no se abre con esa contraseña."
             exit 1
           fi
-          echo "Llave lista y comprobada."
+          echo "Llave nueva lista."
+
+      # El certificado de rotación: la llave vieja firma una declaración que
+      # autoriza a la nueva a sustituirla. Sin él, Android rechaza la
+      # actualización y la gente tendría que desinstalar la app.
+      - name: Generar el certificado de rotación
+        env:
+          PASS: ${{ secrets.NEAR_KEYSTORE_PASS }}
+        run: |
+          "$BT/apksigner" rotate --out lineage.bin \
+            --old-signer --ks "$LLAVE_VIEJA" --ks-pass "pass:$PASS_VIEJA" --ks-key-alias "$ALIAS_VIEJO" \
+            --new-signer --ks near-music.jks --ks-pass env:PASS --key-pass env:PASS --ks-key-alias "$ALIAS_NUEVO"
+          echo "--- certificado de rotación ---"
+          "$BT/apksigner" lineage --in lineage.bin --print-certs -v
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
 
-      - name: Crear APK
+      - name: Crear APK sin firmar
         working-directory: src/android
-        env:
-          NEAR_KEYSTORE_PASS: ${{ secrets.NEAR_KEYSTORE_PASS }}
-          NEAR_KEY_ALIAS: nearmusic
         run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Comprobar que el APK quedó firmado
+      - name: Alinear y firmar
+        env:
+          PASS: ${{ secrets.NEAR_KEYSTORE_PASS }}
         run: |
-          APK=src/android/app/build/outputs/apk/release/app-release.apk
-          if [ ! -f "$APK" ]; then
-            echo "No se generó el APK firmado. Revisa el secret NEAR_KEYSTORE_PASS."
+          SIN=src/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          if [ ! -f "$SIN" ]; then
+            echo "Gradle no generó el APK sin firmar. Contenido de la carpeta:"
             ls -R src/android/app/build/outputs/apk || true
             exit 1
           fi
+          "$BT/zipalign" -p -f 4 "$SIN" alineado.apk
+          "$BT/apksigner" sign \
+            --ks near-music.jks --ks-pass env:PASS --key-pass env:PASS --ks-key-alias "$ALIAS_NUEVO" \
+            --lineage lineage.bin \
+            --min-sdk-version 26 \
+            --out MiMusica.apk alineado.apk
+
+      - name: Comprobar la firma y la rotación
+        run: |
+          echo "--- firma del APK ---"
+          "$BT/apksigner" verify --min-sdk-version 26 --print-certs -v MiMusica.apk | tee verify.txt
+
+          # Las huellas pueden venir con o sin dos puntos y en cualquier caja.
+          TODO=$(cat verify.txt; "$BT/apksigner" lineage --in lineage.bin --print-certs -v)
+          PLANO=$(printf '%s' "$TODO" | tr -d ': \n' | tr '[:upper:]' '[:lower:]')
+
+          fallo() { echo "FALLO: $1"; exit 1; }
+
+          grep -q "Verified using v3 scheme.*true" verify.txt \
+            || fallo "el APK no lleva firma v3, así que no hay rotación."
+
+          case "$PLANO" in *"$HUELLA_NUEVA"*) ;; *)
+            fallo "la llave nueva no aparece en la firma del APK.";; esac
+
+          case "$PLANO" in *"$HUELLA_VIEJA"*) ;; *)
+            fallo "la llave vieja no aparece en el certificado de rotación; los teléfonos con la versión 15 rechazarían la actualización.";; esac
+
+          echo "Firmado con la llave nueva, con la vieja autorizándola."
+          echo "La actualización se instalará encima sin desinstalar."
 
       - name: Borrar la llave del disco
         if: always()
-        run: rm -f src/android/app/near-music.jks
-
-      - name: Preparar archivo
-        run: cp src/android/app/build/outputs/apk/release/app-release.apk MiMusica.apk
+        run: rm -f near-music.jks
 
       - name: Publicar descarga
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: Mi Música ${{ github.run_number }}
-          body: Descarga MiMusica.apk e instálala en tu teléfono.
+          body: |
+            Descarga MiMusica.apk e instálala encima de la que tienes. No hace falta desinstalar nada ni volver a meter el código.
+
+            Si tu teléfono tiene Android 8.0 u 8.1 y te dice que no se puede instalar, desinstala la app primero y pídele a NEAR que te libere el código.
           files: MiMusica.apk
           make_latest: true
