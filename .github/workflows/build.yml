@@ -18,6 +18,17 @@ jobs:
       - name: Descomprimir el proyecto
         run: unzip -o android.zip -d src
 
+      - name: Preparar la llave de firma
+        env:
+          LLAVE_B64: ${{ secrets.NEAR_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$LLAVE_B64" ]; then
+            echo "Falta el secret NEAR_KEYSTORE_B64. Añádelo en Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "$LLAVE_B64" | base64 -d > src/android/app/near-music.jks
+          echo "Llave lista."
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -29,7 +40,23 @@ jobs:
 
       - name: Crear APK
         working-directory: src/android
+        env:
+          NEAR_KEYSTORE_PASS: ${{ secrets.NEAR_KEYSTORE_PASS }}
+          NEAR_KEY_ALIAS: nearmusic
         run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Comprobar que el APK quedó firmado
+        run: |
+          APK=src/android/app/build/outputs/apk/release/app-release.apk
+          if [ ! -f "$APK" ]; then
+            echo "No se generó el APK firmado. Revisa los secrets NEAR_KEYSTORE_B64 y NEAR_KEYSTORE_PASS."
+            ls -R src/android/app/build/outputs/apk || true
+            exit 1
+          fi
+
+      - name: Borrar la llave del disco
+        if: always()
+        run: rm -f src/android/app/near-music.jks
 
       - name: Preparar archivo
         run: cp src/android/app/build/outputs/apk/release/app-release.apk MiMusica.apk
