@@ -3,7 +3,7 @@ name: Crear APK
 on:
   push:
     branches: [main]
-    paths: ['android.zip', '.github/workflows/build.yml']
+    paths: ['android.zip', 'near-music.jks.enc', '.github/workflows/build.yml']
   workflow_dispatch:
 
 permissions:
@@ -18,21 +18,40 @@ jobs:
       - name: Descomprimir el proyecto
         run: unzip -o android.zip -d src
 
-      - name: Preparar la llave de firma
-        env:
-          LLAVE_B64: ${{ secrets.NEAR_KEYSTORE_B64 }}
-        run: |
-          if [ -z "$LLAVE_B64" ]; then
-            echo "Falta el secret NEAR_KEYSTORE_B64. Añádelo en Settings > Secrets and variables > Actions."
-            exit 1
-          fi
-          echo "$LLAVE_B64" | base64 -d > src/android/app/near-music.jks
-          echo "Llave lista."
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
+      # near-music.jks.enc es la llave cifrada. Sin la contraseña del secret
+      # NEAR_KEYSTORE_PASS ese archivo no sirve para nada.
+      - name: Preparar la llave de firma
+        env:
+          LLAVE_PASS: ${{ secrets.NEAR_KEYSTORE_PASS }}
+        run: |
+          if [ -z "$LLAVE_PASS" ]; then
+            echo "Falta el secret NEAR_KEYSTORE_PASS."
+            echo "Créalo en Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          # Se quitan espacios y saltos que el navegador pueda haber metido al pegar.
+          PASS=$(printf '%s' "$LLAVE_PASS" | tr -d '[:space:]')
+
+          if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -a \
+                -in near-music.jks.enc -out src/android/app/near-music.jks \
+                -pass pass:"$PASS" 2>/dev/null; then
+            echo "No se pudo descifrar la llave: la contraseña de NEAR_KEYSTORE_PASS no es la correcta."
+            echo "Pégala de nuevo, tal cual, sin espacios delante ni detrás."
+            exit 1
+          fi
+
+          if ! keytool -list -keystore src/android/app/near-music.jks \
+                -storepass "$PASS" -alias nearmusic > /dev/null 2>&1; then
+            echo "La llave se descifró pero no se abre con esa contraseña."
+            exit 1
+          fi
+          echo "Llave lista y comprobada."
 
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -49,7 +68,7 @@ jobs:
         run: |
           APK=src/android/app/build/outputs/apk/release/app-release.apk
           if [ ! -f "$APK" ]; then
-            echo "No se generó el APK firmado. Revisa los secrets NEAR_KEYSTORE_B64 y NEAR_KEYSTORE_PASS."
+            echo "No se generó el APK firmado. Revisa el secret NEAR_KEYSTORE_PASS."
             ls -R src/android/app/build/outputs/apk || true
             exit 1
           fi
