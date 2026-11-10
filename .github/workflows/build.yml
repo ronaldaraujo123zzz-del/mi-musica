@@ -18,21 +18,50 @@ jobs:
       - name: Descomprimir el proyecto
         run: unzip -o android.zip -d src
 
-      - name: Preparar la llave de firma
-        env:
-          LLAVE_B64: ${{ secrets.NEAR_KEYSTORE_B64 }}
-        run: |
-          if [ -z "$LLAVE_B64" ]; then
-            echo "Falta el secret NEAR_KEYSTORE_B64. Añádelo en Settings > Secrets and variables > Actions."
-            exit 1
-          fi
-          echo "$LLAVE_B64" | base64 -d > src/android/app/near-music.jks
-          echo "Llave lista."
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Preparar la llave de firma
+        env:
+          LLAVE_B64: ${{ secrets.NEAR_KEYSTORE_B64 }}
+          LLAVE_PASS: ${{ secrets.NEAR_KEYSTORE_PASS }}
+        run: |
+          if [ -z "$LLAVE_B64" ]; then
+            echo "Falta el secret NEAR_KEYSTORE_B64."
+            exit 1
+          fi
+          if [ -z "$LLAVE_PASS" ]; then
+            echo "Falta el secret NEAR_KEYSTORE_PASS."
+            exit 1
+          fi
+
+          # Se quitan espacios y saltos de línea que el navegador pueda haber metido al pegar.
+          LIMPIO=$(printf '%s' "$LLAVE_B64" | tr -d '[:space:]')
+          echo "Caracteres recibidos: ${#LIMPIO} (deberían ser 5844)"
+
+          if ! printf '%s' "$LIMPIO" | base64 -d > src/android/app/near-music.jks 2>/dev/null; then
+            echo "El texto de NEAR_KEYSTORE_B64 no se puede convertir de vuelta a la llave."
+            echo "Lo más probable es que al pegarlo se copiara solo una parte."
+            echo "Vuelve a abrir near-music-base64.txt, selecciona TODO y pégalo de nuevo."
+            exit 1
+          fi
+
+          TAM=$(stat -c%s src/android/app/near-music.jks)
+          echo "Llave reconstruida: $TAM bytes"
+          if [ "$TAM" -lt 1000 ]; then
+            echo "La llave salió demasiado pequeña: el texto llegó incompleto."
+            exit 1
+          fi
+
+          if ! keytool -list -keystore src/android/app/near-music.jks \
+                -storepass "$LLAVE_PASS" -alias nearmusic > /dev/null 2>&1; then
+            echo "La llave se reconstruyó, pero la contraseña de NEAR_KEYSTORE_PASS no la abre."
+            echo "Revisa que sea exactamente la que te pasé, sin espacios al principio ni al final."
+            exit 1
+          fi
+          echo "Llave lista y comprobada."
 
       - uses: gradle/actions/setup-gradle@v4
         with:
